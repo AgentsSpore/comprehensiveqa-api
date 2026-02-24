@@ -1,5 +1,6 @@
 """ComprehensiveQA API - Retrieve-Verify-Retrieve Framework"""
 
+import logging
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 from typing import List, Optional
@@ -7,6 +8,13 @@ import uvicorn
 
 from rvr_engine import RVREngine
 from document_store import DocumentStore
+
+# Configure module-level logger
+logger = logging.getLogger(__name__)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+)
 
 app = FastAPI(
     title="ComprehensiveQA API",
@@ -59,7 +67,7 @@ async def query(request: QueryRequest):
             docs_per_round=request.docs_per_round,
             verification_threshold=request.verification_threshold
         )
-        
+
         verified_docs = [
             DocumentResult(
                 text=doc["text"],
@@ -69,15 +77,33 @@ async def query(request: QueryRequest):
             )
             for doc in results["verified_documents"]
         ]
-        
+
         return QueryResponse(
             query=request.query,
             total_rounds=results["total_rounds"],
             verified_documents=verified_docs,
             coverage_improvement=f"{results['coverage_improvement']:.1f}%"
         )
+
+    except ValueError as e:
+        logger.warning("Invalid input for query '%s': %s", request.query, e)
+        raise HTTPException(status_code=400, detail="Invalid request parameters: please check your input values.")
+
+    except KeyError as e:
+        logger.error("Unexpected missing key while processing query '%s': %s", request.query, e)
+        raise HTTPException(status_code=422, detail="The server received an unexpected response structure. Please try again.")
+
+    except HTTPException:
+        # Re-raise HTTP exceptions raised intentionally (e.g. from dependencies)
+        raise
+
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        # Log full details server-side; return a sanitized message to the client
+        logger.exception("Unhandled error while processing query '%s': %s", request.query, e)
+        raise HTTPException(
+            status_code=500,
+            detail="An internal error occurred while processing your request."
+        )
 
 
 @app.get("/stats")
